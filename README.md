@@ -4,7 +4,7 @@ A deno file watcher and command executor. Inspired by [nodemon](https://www.npmj
 
 
 ## Installation
-```ts
+```sh
 deno install --allow-read --allow-run jsr:@andykais/demon
 ```
 
