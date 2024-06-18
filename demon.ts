@@ -6,6 +6,11 @@ import * as cliffy from 'jsr:@cliffy/command@1.0.0-rc.4'
 import deno_jsonc from './deno.json' with { type: "json" };
 
 
+type CliOptions<T> = T extends cliffy.Command<any, any, infer A>
+  ? cliffy.CommandOptions<A>
+  : never
+
+
 const FS_EVENT_DEBOUNCE = 50 // in milliseconds
 
 
@@ -56,6 +61,78 @@ class Executor {
   }
 }
 
+interface StatefulExecutorContext {
+  executor: Executor
+  file_watchlist: string[]
+  file_pattern_regexes: RegExp[]
+  opts:  CliOptions<typeof cli>
+}
+class StatefulExecutor {
+  #ctx: StatefulExecutorContext
+  #atomic_execution = false
+  #queued_execution = false
+  #execution_error?: Error
+
+  constructor(ctx: StatefulExecutorContext) {
+    this.#ctx = ctx
+  }
+
+  file_watch_event = (event: Deno.FsEvent) => {
+    if (this.#execution_error) {
+      throw this.#execution_error
+    }
+
+    // if we set up file regexes, skip any events that do not match one of the file patterns
+    if (this.#ctx.file_pattern_regexes.length) {
+      const matched_file_pattern = this.#ctx.file_pattern_regexes.some(file_pattern_regex => {
+        return event.paths.some(path => file_pattern_regex.test(path))
+      })
+      if (!matched_file_pattern) {
+        return
+      }
+    }
+    this.#debounced_command_execution()
+  }
+
+  #debounced_command_execution = std_async.debounce(() => {
+    this.execute()
+  }, FS_EVENT_DEBOUNCE)
+
+  async execute() {
+    // in case one is already executing (tracked w/ atomic_execution) then we queue up a future one
+    if (!this.#atomic_execution || !this.#ctx.opts.disableQueuedExecution) {
+      this.#queued_execution = true
+    }
+
+    // if execution is happening elsewhere, lets trust that to handle it
+    if (this.#atomic_execution) {
+      return
+    }
+
+    // errors should get bubbled up elsewhere
+    if (this.#execution_error) {
+      return
+    }
+
+    try {
+      this.#atomic_execution = true
+      this.#queued_execution = false
+
+      if (!this.#ctx.opts.disableClearScreen) {
+        console.clear()
+      }
+
+      await this.#ctx.executor.execute()
+      this.#atomic_execution = false
+
+      if (this.#queued_execution) {
+        await this.execute()
+      }
+    } catch (e) {
+      this.#execution_error = e
+    }
+  }
+}
 
 const cli = new cliffy.Command()
   .name("demon")
@@ -93,61 +170,20 @@ const cli = new cliffy.Command()
     }
 
     const executor = new Executor(executable)
-    await executor.execute()
 
-    let atomic_execution = false
-    let queued_execution = false
-    let error: Error | undefined
-    async function try_execution() {
-      try {
-        atomic_execution = true
-        queued_execution = false
-        if (!opts.disableClearScreen) console.clear()
-        await executor.execute()
+    const stateful_executor = new StatefulExecutor({
+      file_pattern_regexes,
+      file_watchlist,
+      executor,
+      opts,
+    })
 
-        if (queued_execution) {
-          await try_execution()
-        }
-      } catch (e) {
-        error = e
-      }
-      atomic_execution = false
-    }
-    const debounce_execute_command = std_async.debounce((_event: Deno.FsEvent) => {
-      // in case one is already executing (tracked w/ atomic_execution) then we queue up a future one
-      if (!atomic_execution || !opts.disableQueuedExecution) {
-        queued_execution = true
-      }
-
-      // if execution is happening elsewhere, lets trust that to handle it
-      if (atomic_execution) {
-        return
-      }
-      // errors should get bubbled up elsewhere
-      if (error) {
-        return
-      }
-      try_execution()
-    }, FS_EVENT_DEBOUNCE)
+    await stateful_executor.execute()
 
     while (true) {
       const watcher = Deno.watchFs(file_watchlist)
       for await (const event of watcher) {
-        if (error) {
-          throw error
-        }
-
-        if (file_pattern_regexes.length) {
-          const matched_file_pattern = file_pattern_regexes.some(file_pattern_regex => {
-            return event.paths.some(path => file_pattern_regex.test(path))
-          })
-          if (!matched_file_pattern) {
-            continue
-          }
-        }
-
-
-        debounce_execute_command(event)
+        stateful_executor.file_watch_event(event)
 
         // editors like neovim swap out files when they write them. The OS watcher (linux at least w/ inotifywait) cant track files after that swap happens so we restart the watcher when we see one
         if (event.kind === 'remove') {

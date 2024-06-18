@@ -1,6 +1,6 @@
 {
   "name": "@andykais/demon",
-  "version": "0.2.3",
+  "version": "0.2.4",
 
   "tasks": {
     "develop": "deno run --watch --check --allow-read --allow-run demon.ts"
