@@ -6,6 +6,7 @@ import * as cliffy from 'jsr:@cliffy/command@1.0.0-rc.4'
 import deno_jsonc from './deno.json' with { type: "json" };
 
 
+// deno-lint-ignore no-explicit-any
 type CliOptions<T> = T extends cliffy.Command<any, any, infer A>
   ? cliffy.CommandOptions<A>
   : never
