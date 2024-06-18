@@ -3,6 +3,7 @@ import * as std_async from 'jsr:@std/async@0.224.2'
 import * as log from 'jsr:@std/log@0.224.2'
 import * as std_colors from 'jsr:@std/fmt@0.225.4/colors'
 import * as cliffy from 'jsr:@cliffy/command@1.0.0-rc.4'
+import deno_jsonc from './deno.json' with { type: "json" };
 
 
 const FS_EVENT_DEBOUNCE = 50 // in milliseconds
@@ -59,7 +60,7 @@ class Executor {
 const cli = new cliffy.Command()
   .name("demon")
   .description("A simple tool for watching files and executing commands")
-  .version("v0.1.0")
+  .version(deno_jsonc.version)
   .arguments('<executable:string>')
   .option('--watch <watch:string>', 'A comma separated list of files and directories to watch')
   .option('--ext, --extensions <ext:string>', 'A comma separated list of file extensions to watch')
