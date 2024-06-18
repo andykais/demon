@@ -1,0 +1,5 @@
+{
+  "tasks": {
+    "develop": "deno run --watch --check --allow-read --allow-run demon.ts",
+  }
+}
