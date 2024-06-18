@@ -61,26 +61,30 @@ const cli = new cliffy.Command()
   .description("A simple tool for watching files and executing commands")
   .version("v0.1.0")
   .arguments('<executable:string>')
-  .option(`--watch <watch:string>`, 'A comma separated list of files and directories to watch')
-  .option(`--ext, --extensions <ext:string>`, 'A comma separated list of file extensions to watch')
-  .option(`--pattern <pattern:string>`, 'A regex file pattern to filter down files')
-  .option(`--disable-queued-execution`, 'By default, if a file watch event happens while a command is executing, demon will execute the command again after it completes. Use this flag to disable that behavior')
+  .option('--watch <watch:string>', 'A comma separated list of files and directories to watch')
+  .option('--ext, --extensions <ext:string>', 'A comma separated list of file extensions to watch')
+  .option('--pattern <pattern:string>', 'A regex file pattern to filter down files')
+  .option('--disable-queued-execution', 'By default, if a file watch event happens while a command is executing, demon will execute the command again after it completes. Use this flag to disable that behavior')
+  .option('--disable-clear-screen', 'By default, demon will clear the terminal screen before retriggering a command. Use this flag to disable that behavior')
   .action(async (opts, executable) => {
     const file_watchlist: string[] = []
     const file_pattern_regexes: RegExp[] = []
 
     // TODO handle file globs: current plan is to read in a watchlist, and if an item is not an existing file/directory attempt to read it as a glob (which I still need a library for)
-    if (opts.ext) {
-      for (const ext of opts.ext.split(',')) {
-        file_pattern_regexes.push(new RegExp(`\.${ext}$`))
-      }
-    }
     if (opts.pattern) {
       file_pattern_regexes.push(new RegExp(opts.pattern))
     }
 
     if (opts.watch) {
       file_watchlist.push(...opts.watch.split(','))
+    }
+    if (opts.ext) {
+      for (const ext of opts.ext.split(',')) {
+        file_pattern_regexes.push(new RegExp(`\.${ext}$`))
+      }
+      if (file_watchlist.length === 0) {
+        file_watchlist.push('.')
+      }
     }
 
     if (await fs.exists(executable)) {
@@ -97,6 +101,7 @@ const cli = new cliffy.Command()
       try {
         atomic_execution = true
         queued_execution = false
+        if (!opts.disableClearScreen) console.clear()
         await executor.execute()
 
         if (queued_execution) {
@@ -127,15 +132,18 @@ const cli = new cliffy.Command()
     while (true) {
       const watcher = Deno.watchFs(file_watchlist)
       for await (const event of watcher) {
+        console.log(event.kind, event.paths)
         if (error) {
           throw error
         }
 
-        const matched_file_pattern = file_pattern_regexes.some(file_pattern_regex => {
-          return event.paths.some(path => file_pattern_regex.test(path))
-        })
-        if (!matched_file_pattern) {
-          continue
+        if (file_pattern_regexes.length) {
+          const matched_file_pattern = file_pattern_regexes.some(file_pattern_regex => {
+            return event.paths.some(path => file_pattern_regex.test(path))
+          })
+          if (!matched_file_pattern) {
+            continue
+          }
         }
 
 
