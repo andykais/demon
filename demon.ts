@@ -62,18 +62,26 @@ const cli = new cliffy.Command()
   .version("v0.1.0")
   .arguments('<executable:string>')
   .option(`--watch <watch:string>`, 'A comma separated list of files and directories to watch')
-  .option(`--ext, --extensions <ext:string>`, 'A regex file pattern to filter down files')
+  .option(`--ext, --extensions <ext:string>`, 'A comma separated list of file extensions to watch')
   .option(`--pattern <pattern:string>`, 'A regex file pattern to filter down files')
   .option(`--disable-queued-execution`, 'By default, if a file watch event happens while a command is executing, demon will execute the command again after it completes. Use this flag to disable that behavior')
   .action(async (opts, executable) => {
     const file_watchlist: string[] = []
+    const file_pattern_regexes: RegExp[] = []
+
+    // TODO handle file globs: current plan is to read in a watchlist, and if an item is not an existing file/directory attempt to read it as a glob (which I still need a library for)
+    if (opts.ext) {
+      for (const ext of opts.ext.split(',')) {
+        file_pattern_regexes.push(new RegExp(`\.${ext}$`))
+      }
+    }
+    if (opts.pattern) {
+      file_pattern_regexes.push(new RegExp(opts.pattern))
+    }
 
     if (opts.watch) {
       file_watchlist.push(...opts.watch.split(','))
     }
-
-    const file_pattern_regex = opts.pattern ? new RegExp(opts.pattern) : null
-    // TODO handle file globs: current plan is to read in a watchlist, and if an item is not an existing file/directory attempt to read it as a glob (which I still need a library for)
 
     if (await fs.exists(executable)) {
       file_watchlist.push(executable)
@@ -123,11 +131,11 @@ const cli = new cliffy.Command()
           throw error
         }
 
-        if (file_pattern_regex) {
-          const matches_at_least_one = event.paths.some(path => file_pattern_regex.test(path))
-          if (!matches_at_least_one) {
-            continue
-          }
+        const matched_file_pattern = file_pattern_regexes.some(file_pattern_regex => {
+          return event.paths.some(path => file_pattern_regex.test(path))
+        })
+        if (!matched_file_pattern) {
+          continue
         }
 
 
