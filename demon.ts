@@ -133,7 +133,6 @@ const cli = new cliffy.Command()
     while (true) {
       const watcher = Deno.watchFs(file_watchlist)
       for await (const event of watcher) {
-        console.log(event.kind, event.paths)
         if (error) {
           throw error
         }
