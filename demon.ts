@@ -1,7 +1,5 @@
 import * as fs from 'jsr:@std/fs@0.229.3'
 import * as std_async from 'jsr:@std/async@0.224.2'
-import * as std_cli from 'jsr:@std/cli@0.224.6'
-import * as std_io from 'jsr:@std/io@0.224.1/read-lines'
 import * as log from 'jsr:@std/log@0.224.2'
 import * as std_colors from 'jsr:@std/fmt@0.225.4/colors'
 import * as cliffy from 'jsr:@cliffy/command@1.0.0-rc.4'
@@ -57,9 +55,6 @@ class Executor {
   }
 }
 
-class ExecutionResult {
-
-}
 
 const cli = new cliffy.Command()
   .name("demon")
@@ -77,7 +72,7 @@ const cli = new cliffy.Command()
       file_watchlist.push(...opts.watch.split(','))
     }
 
-    let file_pattern_regex = opts.pattern ? new RegExp(opts.pattern) : null
+    const file_pattern_regex = opts.pattern ? new RegExp(opts.pattern) : null
     // TODO handle file globs: current plan is to read in a watchlist, and if an item is not an existing file/directory attempt to read it as a glob (which I still need a library for)
 
     if (await fs.exists(executable)) {
@@ -104,7 +99,7 @@ const cli = new cliffy.Command()
       }
       atomic_execution = false
     }
-    const debounce_execute_command = std_async.debounce((event: Deno.FsEvent) => {
+    const debounce_execute_command = std_async.debounce((_event: Deno.FsEvent) => {
       // in case one is already executing (tracked w/ atomic_execution) then we queue up a future one
       if (!atomic_execution || !opts.disableQueuedExecution) {
         queued_execution = true
