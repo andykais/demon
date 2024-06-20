@@ -41,11 +41,22 @@ class Executor {
     this.#encoder = new TextEncoder()
     this.#decoder = new TextDecoder()
     this.#command = command
-    this.#cmd = new Deno.Command('sh', {
-      args: ['-c', command],
-      stdout: 'piped',
-      stderr: 'piped',
-    })
+
+    // shell optimization
+    if (command.includes('&&') || command.includes('||') || command.includes(';')) {
+      this.#cmd = new Deno.Command('sh', {
+        args: ['-c', command],
+        stdout: 'piped',
+        stderr: 'piped',
+      })
+    } else {
+      const [executable, ...args] = command.split(/ +/)
+      this.#cmd = new Deno.Command(executable, {
+        args: args,
+        stdout: 'piped',
+        stderr: 'piped',
+      })
+    }
   }
 
   async execute() {
@@ -79,20 +90,23 @@ class Executor {
 }
 
 interface StatefulExecutorContext {
-  executor: Executor
-  file_watchlist: string[]
+  file_pattern_ignore_regexes: RegExp[]
   file_pattern_regexes: RegExp[]
+  file_watchlist: string[]
+  executable: string
   opts:  CliOptions<typeof cli>
 }
 class StatefulExecutor {
   FS_EVENT_DEBOUNCE = 100 // in milliseconds
 
+  #executor: Executor
   #ctx: StatefulExecutorContext
   #atomic_execution = false
   #queued_execution?: Deno.FsEvent
   #execution_error?: Error
 
   constructor(ctx: StatefulExecutorContext) {
+    this.#executor = new Executor(ctx.executable)
     this.#ctx = ctx
   }
 
@@ -109,6 +123,17 @@ class StatefulExecutor {
       if (!matched_file_pattern) {
         return
       }
+    }
+    // if we set up ignore patterns, skip any events that match one of the file patterns
+    if (this.#ctx.file_pattern_ignore_regexes.length) {
+      const matched_file_pattern = this.#ctx.file_pattern_ignore_regexes.some(file_pattern_regex => {
+        return event.paths.some(path => file_pattern_regex.test(path))
+      })
+      if (matched_file_pattern) {
+        log.debug(`Event ${event.kind} ${event.paths.join(',')} matched ignore list, skipping`)
+        return
+      }
+
     }
     this.#debounced_command_execution(event)
   }
@@ -147,7 +172,7 @@ class StatefulExecutor {
         log.debug(`Command execution triggered manually`)
       }
 
-      await this.#ctx.executor.execute()
+      await this.#executor.execute()
       this.#atomic_execution = false
 
       if (this.#queued_execution) {
@@ -170,11 +195,13 @@ const cli = new cliffy.Command()
   .option('--level <level:string>', 'The log level demon will output.')
   .option('--watch <watch:string>', 'A comma separated list of files and directories to watch')
   .option('--ext, --extensions <ext:string>', 'A comma separated list of file extensions to watch')
+  .option('--ignore <pattern:string>', 'A regex file pattern to filter down files')
   .option('--pattern <pattern:string>', 'A regex file pattern to filter down files')
   .option('--disable-queued-execution', 'By default, if a file watch event happens while a command is executing, demon will execute the command again after it completes. Use this flag to disable that behavior')
   .option('--disable-clear-screen', 'By default, demon will clear the terminal screen before retriggering a command. Use this flag to disable that behavior')
   .action(async (opts, executable) => {
     const file_watchlist: string[] = []
+    const file_pattern_ignore_regexes: RegExp[] = []
     const file_pattern_regexes: RegExp[] = []
 
     // seems like cliffy's type() tool is busted so we have to manually cast logLevel
@@ -183,6 +210,10 @@ const cli = new cliffy.Command()
     // TODO handle file globs: current plan is to read in a watchlist, and if an item is not an existing file/directory attempt to read it as a glob (which I still need a library for)
     if (opts.pattern) {
       file_pattern_regexes.push(new RegExp(opts.pattern))
+    }
+
+    if (opts.ignore) {
+      file_pattern_ignore_regexes.push(new RegExp(opts.ignore))
     }
 
     if (opts.watch) {
@@ -201,12 +232,11 @@ const cli = new cliffy.Command()
       file_watchlist.push(executable)
     }
 
-    const executor = new Executor(executable)
-
     const stateful_executor = new StatefulExecutor({
+      file_pattern_ignore_regexes,
       file_pattern_regexes,
       file_watchlist,
-      executor,
+      executable,
       opts,
     })
 
