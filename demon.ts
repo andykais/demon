@@ -1,4 +1,4 @@
-import * as fs from 'jsr:@std/fs@0.229.3'
+import * as std_fs from 'jsr:@std/fs@0.229.3'
 import * as std_async from 'jsr:@std/async@0.224.2'
 import * as log from 'jsr:@std/log@0.224.2'
 import * as std_colors from 'jsr:@std/fmt@0.225.4/colors'
@@ -12,7 +12,23 @@ type CliOptions<T> = T extends cliffy.Command<any, any, infer A>
   : never
 
 
-const FS_EVENT_DEBOUNCE = 50 // in milliseconds
+const LOG_LEVEL_TYPE = new cliffy.EnumType(["debug", "info", "error"]);
+function setup_logger(cli_log_level: 'debug' | 'info' | 'error') {
+  const std_log_level_mapper = {'error': 'ERROR', 'info': 'INFO', 'debug': 'DEBUG'} as const
+    const std_log_level = std_log_level_mapper[cli_log_level]
+    log.setup({
+      loggers: {
+        default: {
+          level: std_log_level,
+          handlers: ["default"],
+        },
+      },
+      handlers: {
+        default: new log.ConsoleHandler(std_log_level)
+      },
+    })
+
+}
 
 
 class Executor {
@@ -69,9 +85,11 @@ interface StatefulExecutorContext {
   opts:  CliOptions<typeof cli>
 }
 class StatefulExecutor {
+  FS_EVENT_DEBOUNCE = 100 // in milliseconds
+
   #ctx: StatefulExecutorContext
   #atomic_execution = false
-  #queued_execution = false
+  #queued_execution?: Deno.FsEvent
   #execution_error?: Error
 
   constructor(ctx: StatefulExecutorContext) {
@@ -92,17 +110,17 @@ class StatefulExecutor {
         return
       }
     }
-    this.#debounced_command_execution()
+    this.#debounced_command_execution(event)
   }
 
-  #debounced_command_execution = std_async.debounce(() => {
-    this.execute()
-  }, FS_EVENT_DEBOUNCE)
+  #debounced_command_execution = std_async.debounce((event: Deno.FsEvent) => {
+    this.execute(event)
+  }, this.FS_EVENT_DEBOUNCE)
 
-  async execute() {
+  async execute(event?: Deno.FsEvent) {
     // in case one is already executing (tracked w/ atomic_execution) then we queue up a future one
     if (!this.#atomic_execution || !this.#ctx.opts.disableQueuedExecution) {
-      this.#queued_execution = true
+      this.#queued_execution = event
     }
 
     // if execution is happening elsewhere, lets trust that to handle it
@@ -117,17 +135,23 @@ class StatefulExecutor {
 
     try {
       this.#atomic_execution = true
-      this.#queued_execution = false
+      this.#queued_execution = undefined
 
       if (!this.#ctx.opts.disableClearScreen) {
         console.clear()
+      }
+
+      if (event) {
+        log.debug(`Command execution triggered by ${event.kind} from file(s) ${event.paths.join(',')}`)
+      } else {
+        log.debug(`Command execution triggered manually`)
       }
 
       await this.#ctx.executor.execute()
       this.#atomic_execution = false
 
       if (this.#queued_execution) {
-        await this.execute()
+        await this.execute(this.#queued_execution)
       }
     } catch (e) {
       this.#execution_error = e
@@ -140,6 +164,10 @@ const cli = new cliffy.Command()
   .description("A simple tool for watching files and executing commands")
   .version(deno_jsonc.version)
   .arguments('<executable:string>')
+  .type("log-level", LOG_LEVEL_TYPE)
+  .option('-l, --log-level <level:log-level>', 'The log level demon will output.', { default: 'info' })
+  .option('-q, --quiet', 'Shorthand for --log-level=error')
+  .option('--level <level:string>', 'The log level demon will output.')
   .option('--watch <watch:string>', 'A comma separated list of files and directories to watch')
   .option('--ext, --extensions <ext:string>', 'A comma separated list of file extensions to watch')
   .option('--pattern <pattern:string>', 'A regex file pattern to filter down files')
@@ -148,6 +176,9 @@ const cli = new cliffy.Command()
   .action(async (opts, executable) => {
     const file_watchlist: string[] = []
     const file_pattern_regexes: RegExp[] = []
+
+    // seems like cliffy's type() tool is busted so we have to manually cast logLevel
+    setup_logger(opts.quiet ? 'error' : opts.logLevel as 'debug' | 'info' | 'error')
 
     // TODO handle file globs: current plan is to read in a watchlist, and if an item is not an existing file/directory attempt to read it as a glob (which I still need a library for)
     if (opts.pattern) {
@@ -166,7 +197,7 @@ const cli = new cliffy.Command()
       }
     }
 
-    if (await fs.exists(executable)) {
+    if (await std_fs.exists(executable)) {
       file_watchlist.push(executable)
     }
 

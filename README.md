@@ -1,4 +1,4 @@
-# Demon
+# demon
 
 A command line file watcher and shell executor. Inspired by [nodemon](https://www.npmjs.com/package/nodemon)
 
@@ -12,7 +12,7 @@ deno install --allow-read --allow-run jsr:@andykais/demon
 
 ```
 Usage:   demon <executable>
-Version: v0.1.0
+Version: 0.2.4
 
 Description:
 
@@ -22,6 +22,9 @@ Options:
 
   -h, --help                             - Show this help.
   -V, --version                          - Show the version number for this program.
+  -l, --log-level             <level>    - The log level demon will output.                                                 (Default: "info", Values: "debug", "info", "error")
+  -q, --quiet                            - Shorthand for --log-level=error
+  --level                     <level>    - The log level demon will output.
   --watch                     <watch>    - A comma separated list of files and directories to watch
   --ext, --extensions         <ext>      - A comma separated list of file extensions to watch
   --pattern                   <pattern>  - A regex file pattern to filter down files
